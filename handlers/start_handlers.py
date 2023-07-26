@@ -71,7 +71,7 @@ async def end_game(message: Message, state: FSMContext, bot: Bot):
             elif games[game]['player2'] == message.chat.id:
                 games[game]['status'] = 'finished'
                 games[game]['winner'] = games[game]['player1']
-    await message.answer(text=LEXICON['game_over'])
+            await message.answer(text=LEXICON['game_over'])
     await state.clear() 
 
 
@@ -80,34 +80,43 @@ async def end_game(message: Message, state: FSMContext, bot: Bot):
 async def start_game(message: Message, state: FSMContext, bot: Bot):
     game_number: str = get_number()
     await state.update_data(game=game_number)
-    await message.answer(LEXICON['/new'])
     bot_name = await bot.get_me()
-    await message.answer(f'{LEXICON["link_name"]}https://t.me/{bot_name.username}?start={game_number}')
     games[game_number] = dict(number=game_number, player1=message.from_user.id, player2='', 
-                      status='create', winner='', kb=game_field.copy(), step='')
+                              name1=message.from_user.full_name, name2='',
+                              last_msg_player1='', last_msg_player2='', 
+                              status='create', winner='', kb=game_field.copy(), step='')
+    await message.answer(LEXICON['/new'])
+    await message.answer(f'{message.from_user.full_name} {LEXICON["link_name"]}https://t.me/{bot_name.username}?start={game_number}')
     await state.set_state(FSM.start)
 
 
 # Попытка начать другую игру в состоянии игры
 @router.message(Command(commands=['new']), ~StateFilter(default_state))
-async def start_game_not_finished(message: Message, state: FSMContext):
-    await message.answer('Вы не завершили еще игру. \nДля завершения нажмите /end')
+async def start_game_not_finished(message: Message, state: FSMContext, bot: Bot):
+    await end_game(message, state, bot)
+    await start_game(message, state, bot)
+    # await message.answer('Вы не завершили еще игру. \nДля завершения нажмите /end')
 
 
-# Ввод кода игры
+# Подключение к игре
 async def get_join_code(message: Message, state: FSMContext, bot: Bot):
     game: str = message.text.replace('/start', '').strip()
     await state.update_data(game=game)
     if games[game]['status'] == 'create':
         games[game]['player2'] = message.from_user.id
+        games[game]['name2'] = message.from_user.full_name
         games[game]['status'] = 'started'
-        await bot.send_message(games[game]['player1'], text=LEXICON['your_step'],
-                                reply_markup=create_inline_kb(3, *games[game]['kb']))
-        await bot.send_message(games[game]['player2'], text=LEXICON['start_game'],
-                                                    reply_markup=create_inline_kb(3, *games[game]['kb']))
-        await bot.send_message(games[game]['player2'], text=LEXICON['not_your_step'])
+        await bot.send_message(games[game]['player1'], 
+                               text=games[game]['name2']+' присоединился к игре!\n')
+        await bot.send_message(games[game]['player1'], 
+                               text=LEXICON['your_step'],
+                               reply_markup=create_inline_kb(3, *games[game]['kb']))
+        await message.answer(text=LEXICON['start_game']+games[game]['name1'])
+        # await message.answer(text=LEXICON['not_your_step'])
+        # await bot.send_message(games[game]['player2'], text=LEXICON['not_your_step'])
         games[game]['step'] = games[game]['player1']
         await state.set_state(FSM.start)
+        
     else:
         await message.answer(LEXICON['late'])
 
@@ -117,6 +126,11 @@ async def get_join_code(message: Message, state: FSMContext, bot: Bot):
 async def get_step_by_1(callback: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     game: str = data['game']
+
+    print(callback.from_user.id, callback.message.message_id)
+    print(games[game].get('last_msg_player1'))
+    print(games[game].get('last_msg_player2'))
+
     btn_data: str = callback.data
     if btn_data in list(map(str, range(9))):
         btn: int = int(btn_data)
@@ -127,8 +141,10 @@ async def get_step_by_1(callback: CallbackQuery, state: FSMContext, bot: Bot):
                     await callback.message.edit_text(text=LEXICON['victory'],
                                                         reply_markup=create_inline_kb(3, *games[game]['kb']))
                     await callback.answer(text=LEXICON['victory'], show_alert=True)
-                    await bot.send_message(chat_id=games[game]['player2'], text=LEXICON['loss'],
-                                        reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    await bot.edit_message_text(text=LEXICON['loss'], 
+                                                message_id=games[game]['last_msg_player2'],
+                                                chat_id=games[game]['player2'],
+                                                reply_markup=create_inline_kb(3, *games[game]['kb']))
                     games[game]['status'] = 'finished'
                     games[game]['winner'] = games[game]['player1']
                     await state.clear()
@@ -136,25 +152,37 @@ async def get_step_by_1(callback: CallbackQuery, state: FSMContext, bot: Bot):
                     await callback.message.edit_text(text=LEXICON['draw'],
                                                         reply_markup=create_inline_kb(3, *games[game]['kb']))
                     await callback.answer(text=LEXICON['draw'], show_alert=True)
-                    await bot.send_message(chat_id=games[game]['player2'], text=LEXICON['draw'],
-                                        reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    await bot.edit_message_text(text=LEXICON['draw'], 
+                                                message_id=games[game]['last_msg_player2'],
+                                                chat_id=games[game]['player2'],
+                                                reply_markup=create_inline_kb(3, *games[game]['kb']))
                     games[game]['status'] = 'finished'
                     games[game]['winner'] = 'draw'
                     await state.clear()
                 else:
-                    await bot.send_message(chat_id=games[game]['player2'], text=LEXICON['your_step'],
-                                        reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    if games[game].get('last_msg_player2'):
+                        await bot.edit_message_text(text=LEXICON['your_step'], 
+                                                    message_id=games[game]['last_msg_player2'],
+                                                    chat_id=games[game]['player2'],
+                                                    reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    else:
+                        await bot.send_message(chat_id=games[game]['player2'], 
+                                               text=LEXICON['your_step'],
+                                               reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    await callback.message.edit_text(text=LEXICON['not_your_step'])
                     await callback.message.edit_reply_markup(reply_markup=create_inline_kb(3, *games[game]['kb']))
                     games[game]['step'] = games[game]['player2']
-
+                games[game]['last_msg_player1'] = callback.message.message_id    
             elif games[game]['player2'] == callback.from_user.id:
                 games[game]['kb'][btn] = LEXICON_BTN['o']
                 if is_victory(games[game]['kb'], 'o'):
                     await callback.message.edit_text(text=LEXICON['victory'],
                                                         reply_markup=create_inline_kb(3, *games[game]['kb']))
                     await callback.answer(text=LEXICON['victory'], show_alert=True)
-                    await bot.send_message(chat_id=games[game]['player1'], text=LEXICON['loss'],
-                                        reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    await bot.edit_message_text(text=LEXICON['loss'], 
+                                                message_id=games[game]['last_msg_player1'],
+                                                chat_id=games[game]['player1'],
+                                                reply_markup=create_inline_kb(3, *games[game]['kb']))
                     games[game]['status'] = 'finished'
                     games[game]['winner'] = games[game]['player2']
                     await state.clear()
@@ -162,17 +190,38 @@ async def get_step_by_1(callback: CallbackQuery, state: FSMContext, bot: Bot):
                     await callback.message.edit_text(text=LEXICON['draw'],
                                                         reply_markup=create_inline_kb(3, *games[game]['kb']))
                     await callback.answer(text=LEXICON['draw'], show_alert=True)
-                    await bot.send_message(chat_id=games[game]['player1'], text=LEXICON['draw'],
-                                        reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    await bot.edit_message_text(text=LEXICON['draw'], 
+                                                message_id=games[game]['last_msg_player1'],
+                                                chat_id=games[game]['player1'],
+                                                reply_markup=create_inline_kb(3, *games[game]['kb']))
                     games[game]['status'] = 'finished'
                     games[game]['winner'] = 'draw'
                     await state.clear()
                 else:
-                    await bot.send_message(chat_id=games[game]['player1'], text=LEXICON['your_step'],
-                                        reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    if games[game].get('last_msg_player1'):
+                        await bot.edit_message_text(text=LEXICON['your_step'], 
+                                                    message_id=games[game]['last_msg_player1'],
+                                                    chat_id=games[game]['player1'],
+                                                    reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    else:
+                        await bot.send_message(chat_id=games[game]['player1'], 
+                                               text=LEXICON['your_step'],
+                                               reply_markup=create_inline_kb(3, *games[game]['kb']))
+                    await callback.message.edit_text(text=LEXICON['not_your_step'])
                     await callback.message.edit_reply_markup(reply_markup=create_inline_kb(3, *games[game]['kb']))
                     games[game]['step'] = games[game]['player1']
+                    print(callback.from_user.id, callback.message.message_id)
+                games[game]['last_msg_player2'] = callback.message.message_id
+                print(games[game].get('last_msg_player2'))
         else:
-            await callback.answer(text=LEXICON['not_your_step'], show_alert=True)
+            if games[game]['status'] == 'finished':
+                await callback.answer(text=LEXICON['game_over'], show_alert=True)
+                await state.clear()
+            else:
+                await callback.answer(text=LEXICON['not_your_step'], show_alert=True)
     else:
-        await callback.answer(text=LEXICON['busy'], show_alert=True)
+        if games[game]['status'] == 'finished':
+            await callback.answer(text=LEXICON['game_over'], show_alert=True)
+            await state.clear()
+        else:
+            await callback.answer(text=LEXICON['busy'], show_alert=True)
