@@ -62,7 +62,7 @@ async def get_help(message: Message, state: FSMContext):
 @router.message(Command(commands='end'), StateFilter(FSM.start))
 async def end_game(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    if data:
+    if data.get('game'):
         game: str = data['game']
         if games.get(game):
             if games[game]['player1'] == message.chat.id:
